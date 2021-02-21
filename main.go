@@ -12,12 +12,183 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
+const (
+	StatusMainMenu                 = "main-menu"
+	StatusScan4ITEAD               = "scan-itead"
+	StatusSelectYourNetwork        = "select-network"
+	StatusFirstFindDevice          = "first-find-device"
+	StatusNetworkInterfaceSelected = "net-interface-selected"
+	StatusExit                     = "exit"
+)
+
+var status = StatusMainMenu
+
 func main() {
+	for {
+		fmt.Println("**** eval")
+		switch status {
+		case StatusExit:
+			os.Exit(0)
+		case StatusMainMenu:
+			MainMenu()
+		case StatusFirstFindDevice:
+			FindNewDevice()
+		case StatusScan4ITEAD:
+			FindITEADNetwork()
+			os.Exit(0)
+		}
+	}
+
+}
+
+func FindITEADNetwork() {
+	fmt.Println("Scanning WIFI for 30 seconds")
+}
+
+func FindNewDevice() {
+	fmt.Println("Please turn on your device.")
+	fmt.Println("Long press its button (>5sec).")
+	fmt.Println("It should blink rapidly and continuously (if not, long press again).")
+
+	menu := []*Menu{
+		&Menu{
+			Idx:                  1,
+			Label:                "When device is ready, press (1)",
+			Obj:                  nil,
+			LeaveBlankLineBefore: false,
+			LeaveBlankLineAfter:  false,
+		},
+		&Menu{
+			Idx:                  0,
+			Label:                "Exit",
+			Obj:                  nil,
+			LeaveBlankLineBefore: true,
+			LeaveBlankLineAfter:  true,
+		},
+	}
+	choice := GetChoiceFromMenu("FOLLOW INSTRUCTIONS", menu)
+	switch choice.Idx {
+	case 1:
+		status = StatusScan4ITEAD
+		return
+	}
+	status = StatusExit
+}
+
+func MainMenu() {
+	menu := []*Menu{
+		&Menu{
+			Idx:                  1,
+			Label:                "First connect device to your network",
+			Obj:                  nil,
+			LeaveBlankLineBefore: false,
+			LeaveBlankLineAfter:  false,
+		},
+		&Menu{
+			Idx:                  2,
+			Label:                "Find device and unlock OTA firmware flash",
+			Obj:                  nil,
+			LeaveBlankLineBefore: false,
+			LeaveBlankLineAfter:  false,
+		},
+		&Menu{
+			Idx:                  3,
+			Label:                "Flash device (firmware needed)",
+			Obj:                  nil,
+			LeaveBlankLineBefore: false,
+			LeaveBlankLineAfter:  false,
+		},
+		&Menu{
+			Idx:                  0,
+			Label:                "Exit",
+			Obj:                  nil,
+			LeaveBlankLineBefore: true,
+			LeaveBlankLineAfter:  true,
+		},
+	}
+	choice := GetChoiceFromMenu("MAIN MENU:", menu)
+	switch choice.Idx {
+	case 1:
+		status = StatusFirstFindDevice
+		return
+	}
+	status = StatusExit
+}
+
+func showScan(ip *addr) {
+	ps := &PortScanner{
+		ip:   ip.pretty,
+		port: 8081,
+	}
+	found := ps.Start(500 * time.Millisecond)
+	if len(found) == 0 {
+		fmt.Println("No device found")
+		return
+	}
+
+	for _, f := range found {
+		fmt.Println("FOUND ", f)
+	}
+
+}
+
+type Menu struct {
+	Idx                  uint
+	Label                string
+	Obj                  interface{}
+	LeaveBlankLineBefore bool
+	LeaveBlankLineAfter  bool
+}
+
+func GetChoiceFromMenu(title string, menu []*Menu) *Menu {
+	fmt.Println(title)
+	buf := bufio.NewReader(os.Stdin)
+	for _, m := range menu {
+		if m.LeaveBlankLineBefore {
+			fmt.Println()
+		}
+		fmt.Println()
+		fmt.Printf("%d) %s", m.Idx, m.Label)
+		if m.LeaveBlankLineAfter {
+			fmt.Println()
+		}
+	}
+	fmt.Print("Make your choice > ")
+
+	sentence, err := buf.ReadString('\n')
+	if err != nil {
+		panic(err)
+	}
+
+	sentence = strings.TrimRightFunc(sentence, func(c rune) bool {
+		//In windows newline is \r\n
+		return c == '\r' || c == '\n'
+	})
+
+	num, err := strconv.Atoi(sentence)
+	if err != nil {
+		fmt.Println("Cannot understand your choice (only numbers please)")
+		return GetChoiceFromMenu(title, menu)
+	}
+
+	idx := uint(num)
+	for _, m := range menu {
+		if m.Idx == idx {
+			return m
+		}
+	}
+
+	fmt.Println("Cannot understand your choice")
+	return GetChoiceFromMenu(title, menu)
+
+}
+
+func printNetInterfacesMenu() *addr {
 	buf := bufio.NewReader(os.Stdin)
 	ads := localAddresses()
 	if len(ads) == 0 {
 		fmt.Println("NO Network interfaces")
-		return
+		return nil
 	}
 
 	fmt.Println("Choose your network interface:")
@@ -27,7 +198,7 @@ func main() {
 	sentence, err := buf.ReadString('\n')
 	if err != nil {
 		fmt.Println(err)
-		return
+		return nil
 	}
 
 	sentence = strings.TrimRightFunc(sentence, func(c rune) bool {
@@ -39,7 +210,7 @@ func main() {
 	if err != nil {
 		fmt.Println("Cannot understand your choice (only numbers please)")
 		fmt.Println(err)
-		return
+		return nil
 	}
 
 	idx := uint(num)
@@ -47,20 +218,7 @@ func main() {
 	if !ok {
 		fmt.Println("Out of range choice")
 	}
-
-	ps := &PortScanner{
-		ip:  ip.pretty,
-		port: 8081,
-	}
-	found := ps.Start(500*time.Millisecond)
-	if len(found) == 0 {
-		fmt.Println("No device found")
-		return
-	}
-
-	for _, f := range found {
-		fmt.Println("FOUND ", f)
-	}
+	return ip
 
 }
 
@@ -161,7 +319,7 @@ func (ps *PortScanner) Start(timeout time.Duration) map[int]string {
 	n := 1
 	ret := make(map[int]string, 0)
 	for _, ip := range hosts {
-		if ScanPort(ip, ps.port, timeout){
+		if ScanPort(ip, ps.port, timeout) {
 			ret[n] = ip
 			n++
 		}
